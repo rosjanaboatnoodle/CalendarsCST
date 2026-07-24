@@ -1,0 +1,273 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="apple-touch-icon" href="calendar-icon-180.png">
+<link rel="icon" type="image/png" sizes="32x32" href="calendar-favicon-32.png">
+<title>ปฏิทินตารางงาน — รสจนา</title>
+<style>
+  :root{
+    --bg1:#5b73ff;
+    --bg2:#bf2cff;
+    --ink:#1d2b6a;
+    --muted:#6c75a8;
+    --shadow: 0 10px 24px rgba(0,0,0,.18);
+  }
+  *{ box-sizing:border-box; }
+  body{
+    margin:0;
+    font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans Thai", Arial, sans-serif;
+    background: linear-gradient(180deg, var(--bg1), var(--bg2));
+    min-height:100vh;
+    color:#111;
+  }
+  .wrap{ max-width: 760px; margin:0 auto; padding: 32px 16px 60px; }
+  .panel{ background: rgba(255,255,255,.14); border-radius: 22px; padding: 18px 18px 24px; backdrop-filter: blur(2px); }
+  h1{ margin: 4px 0 4px; font-size: 22px; color:#fff; }
+  .sub{ color: rgba(255,255,255,.85); font-size: 13px; font-weight:700; margin-bottom: 14px; }
+
+  .monthBar{
+    display:flex; align-items:center; justify-content:space-between;
+    background: rgba(255,255,255,.92); border-radius: 14px; padding: 10px 12px; margin-bottom: 14px;
+    box-shadow: var(--shadow);
+  }
+  .monthBar button{
+    border:none; background:#0f172a; color:#fff; font-weight:900; padding: 8px 14px; border-radius: 999px; cursor:pointer; font-size:14px;
+  }
+  .monthLabel{ font-weight:900; color:#0f172a; font-size:16px; }
+
+  .legend{ display:flex; gap:14px; flex-wrap:wrap; margin-bottom:12px; }
+  .legendItem{ display:flex; align-items:center; gap:6px; font-size:12.5px; font-weight:800; color:#fff; }
+  .dot{ width:10px; height:10px; border-radius:50%; display:inline-block; }
+  .dotH{ background:#ef4444; }
+  .dotC{ background:#0ea5e9; }
+  .dotS{ background:#f59e0b; }
+
+  .grid{
+    background: rgba(232,233,255,.92); border-radius: 18px; padding: 10px; box-shadow: var(--shadow);
+    display:grid; grid-template-columns: repeat(7, 1fr); gap:6px;
+  }
+  .dow{ text-align:center; font-size:11.5px; font-weight:900; color: var(--muted); padding: 4px 0; }
+  .day{
+    background:#fff; border-radius:10px; min-height: 64px; padding: 6px 6px; cursor:pointer;
+    border: 1px solid rgba(0,0,0,.06); position:relative; display:flex; flex-direction:column; gap:4px;
+  }
+  .day.empty{ background:transparent; border:none; cursor:default; }
+  .day.today{ outline: 2px solid #0f172a; }
+  .dayNum{ font-weight:900; font-size:13px; color:#0f172a; }
+  .badges{ display:flex; gap:3px; flex-wrap:wrap; }
+  .badge{ font-size:10px; padding:1px 5px; border-radius:999px; font-weight:900; color:#fff; }
+  .badgeH{ background:#ef4444; }
+  .badgeC{ background:#0ea5e9; }
+  .badgeS{ background:#f59e0b; }
+
+  .overlay{ position:fixed; inset:0; background:rgba(0,0,0,.45); display:none; align-items:center; justify-content:center; padding:18px; z-index:99; }
+  .overlay.show{ display:flex; }
+  .modal{ width:min(420px,100%); background:#fff; border-radius:16px; padding:18px; box-shadow: var(--shadow); }
+  .modalTitle{ font-weight:900; color:#0f172a; font-size:16px; margin-bottom:12px; }
+  .row{ display:flex; align-items:center; gap:10px; padding:9px 0; border-bottom:1px dashed rgba(0,0,0,.1); }
+  .row label{ font-weight:800; font-size:14px; color:#111827; flex:1; }
+  .row input[type=checkbox]{ width:20px; height:20px; }
+  .actions{ display:flex; gap:10px; margin-top:14px; }
+  .actions button{ flex:1; border:none; border-radius:999px; padding:11px; font-weight:900; cursor:pointer; font-size:13px; }
+  .btnSave{ background:#0f9b6b; color:#fff; }
+  .btnCancel{ background:#e5e7eb; color:#111827; }
+  .statusMsg{ font-size:12px; font-weight:800; margin-top:8px; min-height:16px; }
+  .pinRow{ margin-top:2px; }
+  .pinRow input{ width:100%; padding:10px; border-radius:8px; border:2px solid #93c5fd; font-size:15px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="panel">
+    <h1>ปฏิทินตารางงาน</h1>
+    <div class="sub">กำหนดวันหยุด / วันทำความสะอาดใหญ่ / วันเช็คสต็อค — เลือกได้มากกว่า 1 อย่างต่อวัน</div>
+
+    <div class="monthBar">
+      <button onclick="changeMonth(-1)">‹ เดือนก่อน</button>
+      <div class="monthLabel" id="monthLabel"></div>
+      <button onclick="changeMonth(1)">เดือนถัดไป ›</button>
+    </div>
+
+    <div class="legend">
+      <div class="legendItem"><span class="dot dotH"></span> วันหยุด</div>
+      <div class="legendItem"><span class="dot dotC"></span> ทำความสะอาดใหญ่</div>
+      <div class="legendItem"><span class="dot dotS"></span> เช็คสต็อค</div>
+    </div>
+
+    <div class="grid" id="grid"></div>
+  </div>
+</div>
+
+<div class="overlay" id="editOverlay">
+  <div class="modal">
+    <div class="modalTitle" id="editTitle">แก้ไขวันที่</div>
+    <div class="row"><label>วันหยุด</label><input type="checkbox" id="cbHoliday"></div>
+    <div class="row"><label>ทำความสะอาดใหญ่</label><input type="checkbox" id="cbBigClean"></div>
+    <div class="row" style="border-bottom:none;"><label>เช็คสต็อค</label><input type="checkbox" id="cbStockCheck"></div>
+    <div class="pinRow">
+      <input id="adminPin" type="password" placeholder="รหัสผ่านแอดมิน" inputmode="numeric">
+    </div>
+    <div class="actions">
+      <button class="btnCancel" onclick="closeEdit()">ยกเลิก</button>
+      <button class="btnSave" onclick="saveDay()">บันทึก</button>
+    </div>
+    <div class="statusMsg" id="statusMsg"></div>
+  </div>
+</div>
+
+<script>
+  // ตั้งค่า URL ให้ตรงกับ Web App เดียวกับ index.html
+  const API = "https://script.google.com/macros/s/AKfycbxrjJHuxcS2nHxpzx-KKJqs94idaOPZzxCdyYsoPA5CEVpLYOmt1Lm1bgaYPRlnfS250g/exec";
+
+  let viewYear, viewMonth; // viewMonth: 0-11
+  let scheduleMap = {}; // { "2026-08-05": {is_holiday, is_big_clean, is_stock_check} }
+  let editingDate = "";
+
+  const monthNamesTH = ["มกราคม","กุมภาพันธ์","มีนาคม","เมษายน","พฤษภาคม","มิถุนายน","กรกฎาคม","สิงหาคม","กันยายน","ตุลาคม","พฤศจิกายน","ธันวาคม"];
+  const dowTH = ["อา","จ","อ","พ","พฤ","ศ","ส"];
+
+  function pad2(n){ return n < 10 ? "0"+n : ""+n; }
+  function ymKey(y,m){ return y + "-" + pad2(m+1); }
+  function dateKey(y,m,d){ return y + "-" + pad2(m+1) + "-" + pad2(d); }
+
+  async function apiGet(params){
+    const url = API + (API.includes("?") ? "&" : "?") + new URLSearchParams(params).toString();
+    try{
+      const r = await fetch(url);
+      if (!r.ok) return null;
+      return await r.json();
+    } catch(e){ return null; }
+  }
+
+  async function loadMonth(){
+    document.getElementById("monthLabel").textContent = monthNamesTH[viewMonth] + " " + (viewYear + 543);
+    const j = await apiGet({ action: "schedule_month", month: ymKey(viewYear, viewMonth) });
+    scheduleMap = {};
+    if (j && j.ok && Array.isArray(j.rows)){
+      j.rows.forEach(r => { scheduleMap[r.date] = r; });
+    }
+    renderGrid();
+  }
+
+  function changeMonth(delta){
+    viewMonth += delta;
+    if (viewMonth < 0){ viewMonth = 11; viewYear--; }
+    if (viewMonth > 11){ viewMonth = 0; viewYear++; }
+    loadMonth();
+  }
+
+  function renderGrid(){
+    const grid = document.getElementById("grid");
+    grid.innerHTML = "";
+    dowTH.forEach(d => {
+      const el = document.createElement("div");
+      el.className = "dow";
+      el.textContent = d;
+      grid.appendChild(el);
+    });
+
+    const firstDow = new Date(viewYear, viewMonth, 1).getDay();
+    const daysInMonth = new Date(viewYear, viewMonth + 1, 0).getDate();
+    const todayStr = dateKey(new Date().getFullYear(), new Date().getMonth(), new Date().getDate());
+
+    for (let i = 0; i < firstDow; i++){
+      const empty = document.createElement("div");
+      empty.className = "day empty";
+      grid.appendChild(empty);
+    }
+
+    for (let d = 1; d <= daysInMonth; d++){
+      const key = dateKey(viewYear, viewMonth, d);
+      const info = scheduleMap[key];
+      const cell = document.createElement("div");
+      cell.className = "day" + (key === todayStr ? " today" : "");
+      cell.onclick = () => openEdit(key);
+
+      const num = document.createElement("div");
+      num.className = "dayNum";
+      num.textContent = d;
+      cell.appendChild(num);
+
+      const badges = document.createElement("div");
+      badges.className = "badges";
+      if (info && info.is_holiday){
+        const b = document.createElement("span"); b.className="badge badgeH"; b.textContent="หยุด"; badges.appendChild(b);
+      }
+      if (info && info.is_big_clean){
+        const b = document.createElement("span"); b.className="badge badgeC"; b.textContent="สะอาด"; badges.appendChild(b);
+      }
+      if (info && info.is_stock_check){
+        const b = document.createElement("span"); b.className="badge badgeS"; b.textContent="สต็อค"; badges.appendChild(b);
+      }
+      cell.appendChild(badges);
+      grid.appendChild(cell);
+    }
+  }
+
+  function openEdit(key){
+    editingDate = key;
+    const info = scheduleMap[key] || {};
+    document.getElementById("editTitle").textContent = "แก้ไขวันที่ " + key;
+    document.getElementById("cbHoliday").checked = !!info.is_holiday;
+    document.getElementById("cbBigClean").checked = !!info.is_big_clean;
+    document.getElementById("cbStockCheck").checked = !!info.is_stock_check;
+    document.getElementById("adminPin").value = "";
+    document.getElementById("statusMsg").textContent = "";
+    document.getElementById("editOverlay").classList.add("show");
+  }
+
+  function closeEdit(){
+    document.getElementById("editOverlay").classList.remove("show");
+  }
+
+  async function saveDay(){
+    const pin = document.getElementById("adminPin").value.trim();
+    const statusEl = document.getElementById("statusMsg");
+    if (!pin){
+      statusEl.textContent = "กรุณากรอกรหัสผ่านแอดมิน";
+      statusEl.style.color = "#dc2626";
+      return;
+    }
+
+    const isHoliday = document.getElementById("cbHoliday").checked ? "1" : "0";
+    const isBigClean = document.getElementById("cbBigClean").checked ? "1" : "0";
+    const isStockCheck = document.getElementById("cbStockCheck").checked ? "1" : "0";
+
+    statusEl.textContent = "กำลังบันทึก...";
+    statusEl.style.color = "#374151";
+
+    const result = await apiGet({
+      action: "save_schedule_day",
+      date: editingDate,
+      is_holiday: isHoliday,
+      is_big_clean: isBigClean,
+      is_stock_check: isStockCheck,
+      admin_pin: pin
+    });
+
+    if (!result){
+      statusEl.textContent = "เชื่อมต่อไม่สำเร็จ ลองใหม่อีกครั้ง";
+      statusEl.style.color = "#dc2626";
+      return;
+    }
+    if (!result.ok){
+      statusEl.textContent = result.error === "wrong_admin_pin" ? "รหัสผ่านแอดมินไม่ถูกต้อง" : "บันทึกไม่สำเร็จ: " + (result.error || "unknown");
+      statusEl.style.color = "#dc2626";
+      return;
+    }
+
+    closeEdit();
+    loadMonth();
+  }
+
+  (function init(){
+    const now = new Date();
+    viewYear = now.getFullYear();
+    viewMonth = now.getMonth();
+    loadMonth();
+  })();
+</script>
+</body>
+</html>
