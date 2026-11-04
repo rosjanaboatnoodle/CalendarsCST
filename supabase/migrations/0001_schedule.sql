@@ -1,5 +1,5 @@
 -- Supabase project ของระบบพนักงาน (ปฏิทินตารางงาน + ระบบตอกบัตรในอนาคต)
--- แยกจาก project ของแอปเช็คสต็อก รองรับหลายสาขา
+-- แยกจาก project ของแอปเช็คสต็อก รองรับหลายสาขา หัวข้อเพิ่มเองได้ และข้อความหลายภาษา
 -- Run this once in the Supabase Dashboard -> SQL Editor (paste the whole file, click Run).
 
 create extension if not exists pgcrypto;
@@ -53,32 +53,67 @@ create table if not exists staff (
   unique (branch_id, name)
 );
 
--- ปฏิทิน: หนึ่งแถวต่อหนึ่งวันต่อหนึ่งสาขา (เหมือนแท็บ SCHEDULE)
-create table if not exists schedule_days (
-  branch_id       text not null references branches(id) on delete cascade,
-  date            date not null,
-  is_holiday      boolean not null default false,
-  is_big_clean    boolean not null default false,
-  is_stock_check  boolean not null default false,
-  toilet_duty     text,              -- staff.name ของคนเวร
-  updated_at      timestamptz not null default now(),
-  primary key (branch_id, date)
-);
-
--- ข้อความแจ้งเตือนแต่ละประเภท ใช้ร่วมกันทุกสาขา (เหมือนแท็บ SCHEDULE_TEXT)
--- type: holiday / big_clean / stock_check / toilet_duty_<ชื่อ>
--- หรือ toilet_duty (ข้อความกลาง ใส่ {name} แทนชื่อคนเวร) ใช้เมื่อไม่มีแถวเฉพาะของคนนั้น
-create table if not exists schedule_texts (
-  type        text primary key,
-  text_th     text not null default '',
-  text_mm     text not null default '',
-  text_lo     text not null default '',
+-- คำแปลกลาง ใช้ร่วมกันทุกระบบ (ปฏิทิน, ตอกบัตร)
+-- key เช่น ui.cal.save (ข้อความบนหน้าเว็บ), topic.holiday.name, topic.holiday.message
+-- edited: ภาษาที่คนแก้เองแล้ว เช่น {my,lo} — AI จะไม่เขียนทับภาษาเหล่านี้
+create table if not exists translations (
+  key         text primary key,
+  th          text not null default '',
+  en          text not null default '',
+  my          text not null default '',
+  lo          text not null default '',
+  km          text not null default '',
+  vi          text not null default '',
+  edited      text[] not null default '{}',
   updated_at  timestamptz not null default now()
 );
 
-insert into schedule_texts (type, text_th, text_mm)
-values ('toilet_duty', 'วันนี้คือเวรล้างห้องน้ำของ "{name}"', 'ယနေ့ အိမ်သာဆေးဂျူတီမှာ "{name}"')
-on conflict (type) do nothing;
+-- หัวข้อที่สื่อสารในปฏิทิน (ใช้ร่วมกันทุกสาขา) เพิ่ม/แก้ได้จากปุ่ม ⚙️ ในหน้าปฏิทิน
+-- ชื่อ/คำสั้นบนปฏิทิน/ข้อความแจ้งทีมงาน อยู่ใน translations:
+--   topic.<id>.name, topic.<id>.short, topic.<id>.message
+-- kind: check  = ติ๊กว่าวันนี้มี/ไม่มี (เช่น วันหยุด)
+--       person = เลือกพนักงาน 1 คน (เช่น เวรล้างห้องน้ำ) ใช้ {name} ในข้อความแทนชื่อคน
+create table if not exists topics (
+  id          text primary key,
+  color       text not null default '#8b5cf6',
+  kind        text not null default 'check' check (kind in ('check', 'person')),
+  sort        int not null default 0,
+  active      boolean not null default true,
+  updated_at  timestamptz not null default now()
+);
+
+insert into topics (id, color, kind, sort) values
+  ('holiday',     '#ef4444', 'check',  0),
+  ('big_clean',   '#0ea5e9', 'check',  1),
+  ('stock_check', '#f59e0b', 'check',  2),
+  ('toilet_duty', '#8b5cf6', 'person', 3)
+on conflict (id) do nothing;
+
+insert into translations (key, th) values
+  ('topic.holiday.name',         'วันหยุด'),
+  ('topic.holiday.short',        'หยุด'),
+  ('topic.holiday.message',      'วันนี้วันหยุด'),
+  ('topic.big_clean.name',       'ทำความสะอาดใหญ่'),
+  ('topic.big_clean.short',      'สะอาด'),
+  ('topic.big_clean.message',    'วันนี้ทำความสะอาดใหญ่'),
+  ('topic.stock_check.name',     'เช็คสต็อค'),
+  ('topic.stock_check.short',    'สต็อค'),
+  ('topic.stock_check.message',  'วันนี้คือวันเช็คสต็อค'),
+  ('topic.toilet_duty.name',     'เวรล้างห้องน้ำ'),
+  ('topic.toilet_duty.short',    ''),
+  ('topic.toilet_duty.message',  'วันนี้คือเวรล้างห้องน้ำของ "{name}"')
+on conflict (key) do nothing;
+
+-- ปฏิทิน: หัวข้อที่มีในวันนั้นของแต่ละสาขา (หนึ่งแถวต่อหัวข้อ)
+create table if not exists schedule_entries (
+  branch_id   text not null references branches(id) on delete cascade,
+  date        date not null,
+  topic_id    text not null references topics(id) on delete cascade,
+  person      text,                          -- staff.name สำหรับหัวข้อแบบ person
+  updated_at  timestamptz not null default now(),
+  primary key (branch_id, date, topic_id)
+);
+create index if not exists schedule_entries_month on schedule_entries (branch_id, date);
 
 -- Row Level Security: deny-all for anon/authenticated (ไม่มี policy = ห้ามหมด)
 -- เข้าถึงข้อมูลได้ทางเดียวคือผ่าน Edge Function "api" ที่ใช้ service-role key
@@ -86,5 +121,6 @@ alter table app_settings enable row level security;
 alter table admin_log enable row level security;
 alter table branches enable row level security;
 alter table staff enable row level security;
-alter table schedule_days enable row level security;
-alter table schedule_texts enable row level security;
+alter table translations enable row level security;
+alter table topics enable row level security;
+alter table schedule_entries enable row level security;
