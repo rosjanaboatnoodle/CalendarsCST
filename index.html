@@ -123,8 +123,11 @@
 </div>
 
 <script>
-  // ตั้งค่า URL ให้ตรงกับ Web App เดียวกับ index.html
-  const API = "https://script.google.com/macros/s/AKfycbxrjJHuxcS2nHxpzx-KKJqs94idaOPZzxCdyYsoPA5CEVpLYOmt1Lm1bgaYPRlnfS250g/exec";
+  // ข้อมูลอยู่ใน Supabase (project เดียวกับแอปเช็คสต็อก) ผ่าน Edge Function "api"
+  // ทุกครั้งที่บันทึก ระบบจะเขียนลงแท็บ SCHEDULE ใน Google Sheet ให้ด้วย
+  // key นี้เป็น publishable key ฝังในหน้าเว็บได้ ข้อมูลจริงถูกล็อกด้วย RLS
+  const API = "https://anzpzgvlexeeitmwpxpw.supabase.co/functions/v1/api";
+  const SUPABASE_KEY = "sb_publishable_vGq8fukQvgOkjgmcj1P0dw_PUQIbeAb";
 
   // คนที่อยู่ในเวรล้างห้องน้ำ: key ต้องตรงกับชื่อหลัง toilet_duty_ ในแท็บ SCHEDULE_TEXT
   const TOILET_PEOPLE = [
@@ -146,11 +149,15 @@
   function dateKey(y,m,d){ return y + "-" + pad2(m+1) + "-" + pad2(d); }
 
   async function apiGet(params){
-    const url = API + (API.includes("?") ? "&" : "?") + new URLSearchParams(params).toString();
     try{
-      const r = await fetch(url);
-      if (!r.ok) return null;
-      return await r.json();
+      const r = await fetch(API, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "Authorization": "Bearer " + SUPABASE_KEY, "apikey": SUPABASE_KEY },
+        body: JSON.stringify(params)
+      });
+      const j = await r.json().catch(() => null);
+      if (j && j.ok && j.sheet_synced === false && j.sheet_error) console.warn("บันทึกแล้ว แต่ซิงก์ลง Google Sheet ไม่สำเร็จ:", j.sheet_error);
+      return j;
     } catch(e){ return null; }
   }
 
