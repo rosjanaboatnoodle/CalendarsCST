@@ -79,13 +79,40 @@
   .statusMsg{ font-size:12px; font-weight:800; margin-top:8px; min-height:16px; }
   .pinRow{ margin-top:2px; }
   .pinRow input{ width:100%; padding:10px; border-radius:8px; border:2px solid #93c5fd; font-size:15px; }
+
+  .titleRow{ display:flex; align-items:center; justify-content:space-between; gap:10px; }
+  .gearBtn{ border:none; background:rgba(255,255,255,.22); color:#fff; font-size:18px; width:38px; height:38px; border-radius:50%; cursor:pointer; flex:none; }
+  .branchBar{ display:flex; align-items:center; gap:8px; margin-bottom:12px; }
+  .branchBar label{ color:#fff; font-weight:900; font-size:13px; flex:none; }
+  .branchBar select{ flex:1; min-width:0; padding:9px 10px; border-radius:12px; border:none; font-size:15px; font-weight:800; color:#0f172a; background:rgba(255,255,255,.92); }
+  .branchName{ color:#fff; font-weight:900; font-size:15px; margin-bottom:12px; }
+
+  .modal.wide{ width:min(520px,100%); max-height:calc(100vh - 36px); overflow:auto; }
+  .secTitle{ font-weight:900; font-size:14px; color:#0f172a; margin:14px 0 6px; }
+  .hint{ font-size:12px; color:#6b7280; font-weight:700; margin-bottom:6px; }
+  .field{ width:100%; padding:9px 10px; border-radius:8px; border:2px solid #e5e7eb; font-size:14px; }
+  .fieldRow{ display:flex; gap:6px; margin-bottom:6px; align-items:center; }
+  .fieldRow .field{ flex:1; min-width:0; }
+  .fieldRow .field.sm{ flex:0 0 70px; }
+  .smallBtn{ border:none; border-radius:8px; padding:8px 10px; font-weight:900; cursor:pointer; font-size:12.5px; background:#e5e7eb; color:#111827; flex:none; }
+  .smallBtn.dark{ background:#0f172a; color:#fff; }
+  .smallBtn.red{ background:#fee2e2; color:#b91c1c; }
 </style>
 </head>
 <body>
 <div class="wrap">
   <div class="panel">
-    <h1>ปฏิทินตารางงาน</h1>
+    <div class="titleRow">
+      <h1>ปฏิทินตารางงาน</h1>
+      <button class="gearBtn" onclick="openSettings()" title="ตั้งค่าสาขาและพนักงาน">⚙️</button>
+    </div>
     <div class="sub">กำหนดวันหยุด / วันทำความสะอาดใหญ่ / วันเช็คสต็อค / เวรล้างห้องน้ำ — เลือกได้มากกว่า 1 อย่างต่อวัน</div>
+
+    <div class="branchBar" id="branchBar" style="display:none;">
+      <label for="branchSelect">สาขา</label>
+      <select id="branchSelect" onchange="selectBranch(this.value)"></select>
+    </div>
+    <div class="branchName" id="branchName"></div>
 
     <div class="monthBar">
       <button onclick="changeMonth(-1)">‹ เดือนก่อน</button>
@@ -112,7 +139,7 @@
     <div class="row"><label>เช็คสต็อค</label><input type="checkbox" id="cbStockCheck"></div>
     <div class="row" style="border-bottom:none;"><label>เวรล้างห้องน้ำ</label><select id="selToilet"></select></div>
     <div class="pinRow">
-      <input id="adminPin" type="password" placeholder="รหัสผ่านแอดมิน" inputmode="numeric">
+      <input id="adminPin" type="password" placeholder="รหัสแอดมิน (กลาง หรือของสาขานี้)" inputmode="numeric">
     </div>
     <div class="actions">
       <button class="btnCancel" onclick="closeEdit()">ยกเลิก</button>
@@ -122,9 +149,57 @@
   </div>
 </div>
 
+<div class="overlay" id="settingsOverlay">
+  <div class="modal wide">
+    <div class="modalTitle">ตั้งค่าสาขาและพนักงาน</div>
+
+    <div id="setLock">
+      <div class="hint">ใช้รหัสแอดมินกลางเท่านั้น</div>
+      <div class="pinRow"><input id="setPin" type="password" placeholder="รหัสแอดมินกลาง" inputmode="numeric"></div>
+      <div class="actions">
+        <button class="btnCancel" onclick="closeSettings()">ปิด</button>
+        <button class="btnSave" onclick="unlockSettings()">เข้าสู่การตั้งค่า</button>
+      </div>
+    </div>
+
+    <div id="setBody" style="display:none;">
+      <div class="secTitle">สาขา</div>
+      <div class="fieldRow">
+        <select class="field" id="setBranch" onchange="fillBranchForm()"></select>
+        <button class="smallBtn dark" onclick="newBranchForm()">+ เพิ่มสาขา</button>
+      </div>
+      <div class="fieldRow"><input class="field" id="setBranchName" placeholder="ชื่อสาขา เช่น รสจนา สาขา 2"></div>
+      <div class="fieldRow" id="setBranchIdRow"><input class="field" id="setBranchId" placeholder="รหัสสาขาในลิงก์ (ภาษาอังกฤษ เช่น branch2)"></div>
+      <div class="fieldRow"><input class="field" id="setBranchPin" type="password" inputmode="numeric" placeholder="รหัสแอดมินของสาขา (เว้นว่าง = ไม่เปลี่ยน, ใส่ - = ลบ)"></div>
+      <div class="hint" id="setBranchLink"></div>
+      <div class="fieldRow">
+        <button class="smallBtn dark" onclick="saveBranch()">บันทึกสาขา</button>
+        <button class="smallBtn red" id="btnDeleteBranch" onclick="deleteBranch()">ลบสาขานี้</button>
+      </div>
+
+      <div class="secTitle">พนักงานในเวรล้างห้องน้ำ (สาขาที่เลือก)</div>
+      <div class="hint">ชื่อ = ชื่อในข้อความแจ้งเตือน (เช่น Kla) / ชื่อเต็ม = แสดงในตัวเลือก / ชื่อสั้น = แสดงบนปฏิทิน</div>
+      <div id="staffRows"></div>
+      <div class="fieldRow">
+        <button class="smallBtn" onclick="addStaffRow()">+ เพิ่มคน</button>
+        <button class="smallBtn dark" onclick="saveStaff()">บันทึกรายชื่อ</button>
+      </div>
+
+      <div class="secTitle">เปลี่ยนรหัสแอดมินกลาง</div>
+      <div class="fieldRow">
+        <input class="field" id="setNewPin" type="password" inputmode="numeric" placeholder="รหัสใหม่ (อย่างน้อย 4 ตัว)">
+        <button class="smallBtn dark" onclick="changeAdminPin()">เปลี่ยน</button>
+      </div>
+
+      <div class="statusMsg" id="setStatus"></div>
+      <div class="actions"><button class="btnCancel" onclick="closeSettings()">ปิด</button></div>
+    </div>
+  </div>
+</div>
+
 <script>
   // ข้อมูลอยู่ใน Supabase project ของระบบพนักงาน ผ่าน Edge Function "api" (โค้ดอยู่ใน supabase/ ของ repo นี้)
-  // ทุกครั้งที่บันทึก ระบบจะเขียนลงแท็บ SCHEDULE ใน Google Sheet ให้ด้วย
+  // สาขาที่ตั้ง sync_sheet ไว้ (สาขาที่ดึงมาจาก Google Sheet) จะเขียนลงแท็บ SCHEDULE ในชีทให้ด้วยทุกครั้งที่บันทึก
   // ใส่ค่าจาก Supabase Dashboard -> Project Settings -> API:
   //   PROJECT_REF = ส่วนหน้าของ Project URL (https://<PROJECT_REF>.supabase.co)
   //   SUPABASE_KEY = publishable key (sb_publishable_...) ฝังในหน้าเว็บได้ ข้อมูลจริงถูกล็อกด้วย RLS
@@ -132,26 +207,35 @@
   const SUPABASE_KEY = "YOUR_PUBLISHABLE_KEY";
   const API = "https://" + PROJECT_REF + ".supabase.co/functions/v1/api";
 
-  // คนที่อยู่ในเวรล้างห้องน้ำ: key ต้องตรงกับชื่อหลัง toilet_duty_ ในแท็บ SCHEDULE_TEXT
-  const TOILET_PEOPLE = [
-    { key: "Kla",    label: "กล้า Kla",        short: "Kla" },
-    { key: "Bank",   label: "แบงค์ Bank",      short: "Bank" },
-    { key: "Maylin", label: "เมย์ลิน Maylin",  short: "May" },
-    { key: "Hom",    label: "หอม Hom",         short: "Hom" }
-  ];
-
+  let branches = [];      // [{ id, name, staff: [{name, label, short}] }]
+  let branchId = "";
   let viewYear, viewMonth; // viewMonth: 0-11
-  let scheduleMap = {}; // { "2026-08-05": {is_holiday, is_big_clean, is_stock_check, toilet_duty} }
+  let scheduleMap = {};   // { "2026-08-05": {is_holiday, is_big_clean, is_stock_check, toilet_duty} }
   let editingDate = "";
+  let settingsPin = "";
 
   const monthNamesTH = ["มกราคม","กุมภาพันธ์","มีนาคม","เมษายน","พฤษภาคม","มิถุนายน","กรกฎาคม","สิงหาคม","กันยายน","ตุลาคม","พฤศจิกายน","ธันวาคม"];
   const dowTH = ["อา","จ","อ","พ","พฤ","ศ","ส"];
+  const ERRORS = {
+    wrong_admin_pin: "รหัสแอดมินไม่ถูกต้อง",
+    pin_too_short: "รหัสต้องมีอย่างน้อย 4 ตัว",
+    missing_name: "กรุณาใส่ชื่อ",
+    bad_branch_id: "รหัสสาขาต้องเป็นภาษาอังกฤษหรือตัวเลข",
+    duplicate_name: "มีชื่อซ้ำกัน",
+    last_branch: "ลบสาขาสุดท้ายไม่ได้",
+    unknown_branch: "ไม่พบสาขานี้"
+  };
 
   function pad2(n){ return n < 10 ? "0"+n : ""+n; }
   function ymKey(y,m){ return y + "-" + pad2(m+1); }
   function dateKey(y,m,d){ return y + "-" + pad2(m+1) + "-" + pad2(d); }
+  function errText(j){ return !j ? "เชื่อมต่อไม่สำเร็จ ลองใหม่อีกครั้ง" : (ERRORS[j.error] || ("ไม่สำเร็จ: " + (j.error || "unknown"))); }
+  function setMsg(id, text, ok){ const el = document.getElementById(id); el.textContent = text; el.style.color = ok ? "#0f9b6b" : (ok === false ? "#dc2626" : "#374151"); }
+  function currentBranch(){ return branches.find(b => b.id === branchId) || null; }
+  function lsGet(k){ try{ return localStorage.getItem(k); } catch(e){ return null; } }
+  function lsSet(k, v){ try{ localStorage.setItem(k, v); } catch(e){} }
 
-  async function apiGet(params){
+  async function api(params){
     try{
       const r = await fetch(API, {
         method: "POST",
@@ -164,12 +248,52 @@
     } catch(e){ return null; }
   }
 
+  // ---------- สาขา ----------
+
+  async function loadBranches(){
+    const j = await api({ action: "list_branches" });
+    branches = (j && j.ok && Array.isArray(j.branches)) ? j.branches : [];
+    renderBranchPicker();
+  }
+
+  function renderBranchPicker(){
+    const fromUrl = new URLSearchParams(location.search).get("branch");
+    const wanted = [branchId, fromUrl, lsGet("calendar_branch")].find(id => id && branches.some(b => b.id === id));
+    branchId = wanted || (branches[0] ? branches[0].id : "");
+
+    const sel = document.getElementById("branchSelect");
+    sel.innerHTML = "";
+    branches.forEach(b => {
+      const o = document.createElement("option");
+      o.value = b.id; o.textContent = b.name;
+      sel.appendChild(o);
+    });
+    sel.value = branchId;
+    // ถ้ามีสาขาเดียว ไม่ต้องโชว์ตัวเลือก แค่บอกชื่อสาขา
+    document.getElementById("branchBar").style.display = branches.length > 1 ? "flex" : "none";
+    const b = currentBranch();
+    document.getElementById("branchName").textContent = (branches.length === 1 && b) ? b.name : "";
+  }
+
+  function selectBranch(id){
+    branchId = id;
+    lsSet("calendar_branch", id);
+    const url = new URL(location.href);
+    url.searchParams.set("branch", id);
+    history.replaceState(null, "", url);
+    loadMonth();
+  }
+
+  // ---------- ปฏิทิน ----------
+
   async function loadMonth(){
     document.getElementById("monthLabel").textContent = monthNamesTH[viewMonth] + " " + (viewYear + 543);
-    const j = await apiGet({ action: "schedule_month", month: ymKey(viewYear, viewMonth) });
     scheduleMap = {};
-    if (j && j.ok && Array.isArray(j.rows)){
-      j.rows.forEach(r => { scheduleMap[r.date] = r; });
+    if (branchId){
+      const j = await api({ action: "schedule_month", branch: branchId, month: ymKey(viewYear, viewMonth) });
+      if (j && j.ok && Array.isArray(j.rows)){
+        j.rows.forEach(r => { scheduleMap[r.date] = r; });
+      }
     }
     renderGrid();
   }
@@ -179,6 +303,13 @@
     if (viewMonth < 0){ viewMonth = 11; viewYear--; }
     if (viewMonth > 11){ viewMonth = 0; viewYear++; }
     loadMonth();
+  }
+
+  function addBadge(parent, cls, text, title){
+    const b = document.createElement("span");
+    b.className = "badge " + cls; b.textContent = text;
+    if (title) b.title = title;
+    parent.appendChild(b);
   }
 
   function renderGrid(){
@@ -194,6 +325,7 @@
     const firstDow = new Date(viewYear, viewMonth, 1).getDay();
     const daysInMonth = new Date(viewYear, viewMonth + 1, 0).getDate();
     const todayStr = dateKey(new Date().getFullYear(), new Date().getMonth(), new Date().getDate());
+    const staff = (currentBranch() || {}).staff || [];
 
     for (let i = 0; i < firstDow; i++){
       const empty = document.createElement("div");
@@ -215,17 +347,12 @@
 
       const badges = document.createElement("div");
       badges.className = "badges";
-      if (info && info.is_holiday){
-        const b = document.createElement("span"); b.className="badge badgeH"; b.textContent="หยุด"; badges.appendChild(b);
-      }
-      if (info && info.is_big_clean){
-        const b = document.createElement("span"); b.className="badge badgeC"; b.textContent="สะอาด"; badges.appendChild(b);
-      }
-      if (info && info.is_stock_check){
-        const b = document.createElement("span"); b.className="badge badgeS"; b.textContent="สต็อค"; badges.appendChild(b);
-      }
+      if (info && info.is_holiday) addBadge(badges, "badgeH", "หยุด");
+      if (info && info.is_big_clean) addBadge(badges, "badgeC", "สะอาด");
+      if (info && info.is_stock_check) addBadge(badges, "badgeS", "สต็อค");
       if (info && info.toilet_duty){
-        const b = document.createElement("span"); b.className="badge badgeT"; const person = TOILET_PEOPLE.find(p => p.key === info.toilet_duty); b.textContent = person ? person.short : info.toilet_duty; b.title="เวรล้างห้องน้ำ: " + info.toilet_duty; badges.appendChild(b);
+        const person = staff.find(p => p.name === info.toilet_duty);
+        addBadge(badges, "badgeT", person ? person.short : info.toilet_duty, "เวรล้างห้องน้ำ: " + info.toilet_duty);
       }
       cell.appendChild(badges);
       grid.appendChild(cell);
@@ -233,27 +360,30 @@
   }
 
   function openEdit(key){
+    if (!branchId) return;
     editingDate = key;
     const info = scheduleMap[key] || {};
-    document.getElementById("editTitle").textContent = "แก้ไขวันที่ " + key;
+    const b = currentBranch();
+    document.getElementById("editTitle").textContent = "แก้ไขวันที่ " + key + (b && branches.length > 1 ? " — " + b.name : "");
     document.getElementById("cbHoliday").checked = !!info.is_holiday;
     document.getElementById("cbBigClean").checked = !!info.is_big_clean;
     document.getElementById("cbStockCheck").checked = !!info.is_stock_check;
     fillToiletSelect(info.toilet_duty || "");
     document.getElementById("adminPin").value = "";
-    document.getElementById("statusMsg").textContent = "";
+    setMsg("statusMsg", "");
     document.getElementById("editOverlay").classList.add("show");
   }
 
   function fillToiletSelect(current){
     const sel = document.getElementById("selToilet");
     sel.innerHTML = "";
-    const opts = [{ key: "", label: "— ไม่มี —" }].concat(TOILET_PEOPLE);
-    // ถ้าในชีทมีชื่อที่ไม่อยู่ในรายการ (เช่นคนออกไปแล้ว) ก็ยังโชว์ไว้ ไม่ให้หายตอนกดบันทึก
-    if (current && !TOILET_PEOPLE.some(p => p.key === current)) opts.push({ key: current, label: current });
+    const staff = (currentBranch() || {}).staff || [];
+    const opts = [{ name: "", label: "— ไม่มี —" }].concat(staff);
+    // ถ้าในข้อมูลมีชื่อที่ไม่อยู่ในรายชื่อ (เช่นคนออกไปแล้ว) ก็ยังโชว์ไว้ ไม่ให้หายตอนกดบันทึก
+    if (current && !staff.some(p => p.name === current)) opts.push({ name: current, label: current });
     opts.forEach(p => {
       const o = document.createElement("option");
-      o.value = p.key; o.textContent = p.label;
+      o.value = p.name; o.textContent = p.label;
       sel.appendChild(o);
     });
     sel.value = current;
@@ -265,53 +395,180 @@
 
   async function saveDay(){
     const pin = document.getElementById("adminPin").value.trim();
-    const statusEl = document.getElementById("statusMsg");
-    if (!pin){
-      statusEl.textContent = "กรุณากรอกรหัสผ่านแอดมิน";
-      statusEl.style.color = "#dc2626";
-      return;
-    }
+    if (!pin){ setMsg("statusMsg", "กรุณากรอกรหัสผ่านแอดมิน", false); return; }
+    setMsg("statusMsg", "กำลังบันทึก...");
 
-    const isHoliday = document.getElementById("cbHoliday").checked ? "1" : "0";
-    const isBigClean = document.getElementById("cbBigClean").checked ? "1" : "0";
-    const isStockCheck = document.getElementById("cbStockCheck").checked ? "1" : "0";
-    const toiletDuty = document.getElementById("selToilet").value;
-
-    statusEl.textContent = "กำลังบันทึก...";
-    statusEl.style.color = "#374151";
-
-    const result = await apiGet({
+    const result = await api({
       action: "save_schedule_day",
+      branch: branchId,
       date: editingDate,
-      is_holiday: isHoliday,
-      is_big_clean: isBigClean,
-      is_stock_check: isStockCheck,
-      toilet_duty: toiletDuty,
+      is_holiday: document.getElementById("cbHoliday").checked ? "1" : "0",
+      is_big_clean: document.getElementById("cbBigClean").checked ? "1" : "0",
+      is_stock_check: document.getElementById("cbStockCheck").checked ? "1" : "0",
+      toilet_duty: document.getElementById("selToilet").value,
       admin_pin: pin
     });
-
-    if (!result){
-      statusEl.textContent = "เชื่อมต่อไม่สำเร็จ ลองใหม่อีกครั้ง";
-      statusEl.style.color = "#dc2626";
-      return;
-    }
-    if (!result.ok){
-      statusEl.textContent = result.error === "wrong_admin_pin" ? "รหัสผ่านแอดมินไม่ถูกต้อง" : "บันทึกไม่สำเร็จ: " + (result.error || "unknown");
-      statusEl.style.color = "#dc2626";
-      return;
-    }
+    if (!result || !result.ok){ setMsg("statusMsg", errText(result), false); return; }
 
     closeEdit();
     loadMonth();
   }
 
-  (function init(){
+  // ---------- ตั้งค่า (รหัสแอดมินกลาง) ----------
+
+  function openSettings(){
+    settingsPin = "";
+    document.getElementById("setPin").value = "";
+    document.getElementById("setLock").style.display = "";
+    document.getElementById("setBody").style.display = "none";
+    setMsg("setStatus", "");
+    document.getElementById("settingsOverlay").classList.add("show");
+  }
+
+  function closeSettings(){
+    document.getElementById("settingsOverlay").classList.remove("show");
+    settingsPin = "";
+  }
+
+  async function unlockSettings(){
+    const pin = document.getElementById("setPin").value.trim();
+    const j = await api({ action: "check_admin_pin", admin_pin: pin });
+    if (!j || !j.ok){ alert(j ? "รหัสแอดมินกลางไม่ถูกต้อง" : "เชื่อมต่อไม่สำเร็จ"); return; }
+    settingsPin = pin;
+    document.getElementById("setLock").style.display = "none";
+    document.getElementById("setBody").style.display = "";
+    renderSettingsBranches(branchId);
+  }
+
+  function renderSettingsBranches(selectId){
+    const sel = document.getElementById("setBranch");
+    sel.innerHTML = "";
+    branches.forEach(b => {
+      const o = document.createElement("option");
+      o.value = b.id; o.textContent = b.name;
+      sel.appendChild(o);
+    });
+    if (selectId && branches.some(b => b.id === selectId)) sel.value = selectId;
+    if (branches.length) fillBranchForm(); else newBranchForm();
+  }
+
+  function branchLink(id){
+    const url = new URL(location.href);
+    url.search = "";
+    url.searchParams.set("branch", id);
+    return url.toString();
+  }
+
+  function fillBranchForm(){
+    const b = branches.find(x => x.id === document.getElementById("setBranch").value);
+    if (!b) return newBranchForm();
+    document.getElementById("setBranchName").value = b.name;
+    document.getElementById("setBranchId").value = b.id;
+    document.getElementById("setBranchIdRow").style.display = "none";
+    document.getElementById("setBranchPin").value = "";
+    document.getElementById("setBranchLink").textContent = "ลิงก์ของสาขานี้: " + branchLink(b.id) + (b.sync_sheet ? " (ซิงก์กับ Google Sheet)" : "");
+    document.getElementById("btnDeleteBranch").style.display = branches.length > 1 ? "" : "none";
+    renderStaffRows(b.staff || []);
+  }
+
+  function newBranchForm(){
+    document.getElementById("setBranch").value = "";
+    document.getElementById("setBranchName").value = "";
+    document.getElementById("setBranchId").value = "";
+    document.getElementById("setBranchIdRow").style.display = "";
+    document.getElementById("setBranchPin").value = "";
+    document.getElementById("setBranchLink").textContent = "สาขาใหม่: บันทึกสาขาก่อน แล้วค่อยเพิ่มรายชื่อพนักงาน";
+    document.getElementById("btnDeleteBranch").style.display = "none";
+    renderStaffRows([]);
+  }
+
+  async function saveBranch(){
+    const isNew = !document.getElementById("setBranch").value;
+    const payload = {
+      action: "save_branch",
+      admin_pin: settingsPin,
+      id: document.getElementById("setBranchId").value.trim(),
+      name: document.getElementById("setBranchName").value.trim(),
+      branch_pin: document.getElementById("setBranchPin").value.trim()
+    };
+    if (isNew && !payload.id){ setMsg("setStatus", "กรุณาใส่รหัสสาขา (ภาษาอังกฤษ)", false); return; }
+    if (isNew && branches.some(b => b.id === payload.id.toLowerCase())){ setMsg("setStatus", "รหัสสาขานี้มีอยู่แล้ว", false); return; }
+    setMsg("setStatus", "กำลังบันทึก...");
+    const j = await api(payload);
+    if (!j || !j.ok){ setMsg("setStatus", errText(j), false); return; }
+    await loadBranches();
+    renderSettingsBranches(j.id);
+    loadMonth();
+    setMsg("setStatus", "บันทึกสาขาแล้ว", true);
+  }
+
+  async function deleteBranch(){
+    const b = branches.find(x => x.id === document.getElementById("setBranch").value);
+    if (!b) return;
+    if (!confirm("ลบสาขา \"" + b.name + "\" และข้อมูลปฏิทินทั้งหมดของสาขานี้?\nลบแล้วกู้คืนไม่ได้")) return;
+    const j = await api({ action: "delete_branch", admin_pin: settingsPin, id: b.id });
+    if (!j || !j.ok){ setMsg("setStatus", errText(j), false); return; }
+    if (branchId === b.id) branchId = "";
+    await loadBranches();
+    renderSettingsBranches(branchId);
+    loadMonth();
+    setMsg("setStatus", "ลบสาขาแล้ว", true);
+  }
+
+  function renderStaffRows(list){
+    const box = document.getElementById("staffRows");
+    box.innerHTML = "";
+    list.forEach(p => addStaffRow(p));
+  }
+
+  function addStaffRow(p){
+    p = p || {};
+    const row = document.createElement("div");
+    row.className = "fieldRow staffRow";
+    const mk = (cls, ph, val) => { const i = document.createElement("input"); i.className = cls; i.placeholder = ph; i.value = val || ""; row.appendChild(i); return i; };
+    mk("field sm", "ชื่อ", p.name);
+    mk("field", "ชื่อเต็ม", p.label && p.label !== p.name ? p.label : "");
+    mk("field sm", "ชื่อสั้น", p.short && p.short !== p.name ? p.short : "");
+    const del = document.createElement("button");
+    del.className = "smallBtn red"; del.textContent = "ลบ";
+    del.onclick = () => row.remove();
+    row.appendChild(del);
+    document.getElementById("staffRows").appendChild(row);
+  }
+
+  async function saveStaff(){
+    const id = document.getElementById("setBranch").value;
+    if (!id){ setMsg("setStatus", "บันทึกสาขาก่อน แล้วค่อยเพิ่มรายชื่อ", false); return; }
+    const staff = Array.from(document.querySelectorAll("#staffRows .staffRow")).map(row => {
+      const [name, label, short] = Array.from(row.querySelectorAll("input")).map(i => i.value.trim());
+      return { name, label, short };
+    }).filter(s => s.name);
+    setMsg("setStatus", "กำลังบันทึก...");
+    const j = await api({ action: "save_staff", admin_pin: settingsPin, branch_id: id, staff });
+    if (!j || !j.ok){ setMsg("setStatus", errText(j), false); return; }
+    await loadBranches();
+    renderSettingsBranches(id);
+    renderGrid();
+    setMsg("setStatus", "บันทึกรายชื่อแล้ว", true);
+  }
+
+  async function changeAdminPin(){
+    const next = document.getElementById("setNewPin").value.trim();
+    const j = await api({ action: "change_admin_pin", admin_pin: settingsPin, new_pin: next });
+    if (!j || !j.ok){ setMsg("setStatus", errText(j), false); return; }
+    settingsPin = next;
+    document.getElementById("setNewPin").value = "";
+    setMsg("setStatus", "เปลี่ยนรหัสแอดมินกลางแล้ว", true);
+  }
+
+  (async function init(){
     if (PROJECT_REF.startsWith("YOUR_") || SUPABASE_KEY.startsWith("YOUR_")){
       document.querySelector(".sub").textContent = "⚠️ ยังไม่ได้ตั้งค่า Supabase: ใส่ PROJECT_REF และ SUPABASE_KEY ใน index.html";
     }
     const now = new Date();
     viewYear = now.getFullYear();
     viewMonth = now.getMonth();
+    await loadBranches();
     loadMonth();
   })();
 </script>

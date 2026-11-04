@@ -1,5 +1,5 @@
 // Edge Function "api" ของระบบพนักงาน (Supabase project แยกจากแอปเช็คสต็อก)
-// ตอนนี้มีแค่ปฏิทินตารางงาน ระบบตอกบัตรจะเพิ่มเป็น action ใหม่ในไฟล์นี้
+// ตอนนี้มีปฏิทินตารางงาน (หลายสาขา) ระบบตอกบัตรจะเพิ่มเป็น action ใหม่ในไฟล์นี้
 //
 // Deploy: Supabase Dashboard -> Edge Functions -> create function named "api" ->
 // paste this file's contents -> Deploy.
@@ -198,15 +198,133 @@ async function sheetsAppendRow(spreadsheetId: string, range: string, row: unknow
 }
 
 // ============================================================
-// Schedule calendar: holidays / big clean / stock check / toilet duty.
-// Supabase is the source of truth; every save is also mirrored into the SCHEDULE tab of the
-// payroll sheet so anything still reading that sheet keeps working.
+// Branches, staff and admin PINs
+// The central admin PIN (app_settings.admin_pin_hash) can do everything. A branch may also have
+// its own PIN, which can only save that branch's calendar days.
+// ============================================================
+
+type Branch = { id: string; name: string; sort: number; admin_pin_hash: string | null; sync_sheet: boolean };
+
+async function getBranch(id: string): Promise<Branch | null> {
+  if (!id) return null;
+  const { data } = await supabase.from("branches").select("*").eq("id", id).maybeSingle();
+  return (data as Branch) ?? null;
+}
+
+async function canEditBranch(branch: Branch, pin: string): Promise<boolean> {
+  if (await checkAdminPin(pin)) return true;
+  return !!pin && checkPassword(branch.admin_pin_hash, pin);
+}
+
+function cleanBranchId(s: string): string {
+  return s.trim().toLowerCase().replace(/[^a-z0-9_-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40);
+}
+
+// Public: branches with their active staff, for the calendar's branch picker and duty dropdown.
+async function handleListBranches() {
+  const { data: branches, error } = await supabase.from("branches")
+    .select("id, name, sort, sync_sheet").order("sort").order("name");
+  if (error) return json({ ok: false, error: error.message });
+  const { data: staff } = await supabase.from("staff")
+    .select("branch_id, name, label, short, sort").eq("active", true).order("sort").order("name");
+  return json({
+    ok: true,
+    branches: (branches ?? []).map((b) => ({
+      ...b,
+      staff: (staff ?? []).filter((s) => s.branch_id === b.id)
+        .map((s) => ({ name: s.name, label: s.label || s.name, short: s.short || s.name })),
+    })),
+  });
+}
+
+// Central admin only. Creates or updates a branch. `branch_pin`: "" leaves it, "-" clears it.
+async function handleSaveBranch(p: Record<string, unknown>) {
+  if (!(await checkAdminPin(String(p.admin_pin ?? "")))) return json({ ok: false, error: "wrong_admin_pin" });
+  const name = String(p.name ?? "").trim();
+  const id = cleanBranchId(String(p.id ?? "") || name);
+  if (!name) return json({ ok: false, error: "missing_name" });
+  if (!id) return json({ ok: false, error: "bad_branch_id" });
+  const row: Record<string, unknown> = { id, name };
+  if (p.sort !== undefined) row.sort = Number(p.sort) || 0;
+  const pin = String(p.branch_pin ?? "").trim();
+  if (pin === "-") row.admin_pin_hash = null;
+  else if (pin) {
+    if (pin.length < 4) return json({ ok: false, error: "pin_too_short" });
+    row.admin_pin_hash = await hashPassword(pin);
+  }
+  const { error } = await supabase.from("branches").upsert(row);
+  if (error) return json({ ok: false, error: error.message });
+  await logAdmin("save_branch", { id, name, pin_changed: !!pin });
+  return json({ ok: true, id });
+}
+
+// Central admin only. Deletes the branch and everything in it.
+async function handleDeleteBranch(p: Record<string, unknown>) {
+  if (!(await checkAdminPin(String(p.admin_pin ?? "")))) return json({ ok: false, error: "wrong_admin_pin" });
+  const id = String(p.id ?? "");
+  const { count } = await supabase.from("branches").select("id", { count: "exact", head: true });
+  if ((count ?? 0) <= 1) return json({ ok: false, error: "last_branch" });
+  const { error } = await supabase.from("branches").delete().eq("id", id);
+  if (error) return json({ ok: false, error: error.message });
+  await logAdmin("delete_branch", { id });
+  return json({ ok: true });
+}
+
+// Central admin only. Replaces a branch's active staff list with `staff`: [{name, label, short}].
+// People left out are set inactive (not deleted), so old calendar days keep their name.
+async function handleSaveStaff(p: Record<string, unknown>) {
+  if (!(await checkAdminPin(String(p.admin_pin ?? "")))) return json({ ok: false, error: "wrong_admin_pin" });
+  const branch = await getBranch(String(p.branch_id ?? ""));
+  if (!branch) return json({ ok: false, error: "unknown_branch" });
+  const list = Array.isArray(p.staff) ? p.staff as Array<Record<string, unknown>> : [];
+  const rows = list
+    .map((s, i) => ({
+      branch_id: branch.id,
+      name: String(s.name ?? "").trim(),
+      label: String(s.label ?? "").trim(),
+      short: String(s.short ?? "").trim(),
+      active: true,
+      sort: i,
+    }))
+    .filter((s) => s.name);
+  const names = rows.map((r) => r.name);
+  if (new Set(names).size !== names.length) return json({ ok: false, error: "duplicate_name" });
+
+  const { error: offErr } = await supabase.from("staff").update({ active: false }).eq("branch_id", branch.id);
+  if (offErr) return json({ ok: false, error: offErr.message });
+  if (rows.length) {
+    const { error } = await supabase.from("staff").upsert(rows, { onConflict: "branch_id,name" });
+    if (error) return json({ ok: false, error: error.message });
+  }
+  await logAdmin("save_staff", { branch_id: branch.id, names });
+  return json({ ok: true });
+}
+
+async function handleChangeAdminPin(p: Record<string, unknown>) {
+  if (!(await checkAdminPin(String(p.admin_pin ?? "")))) return json({ ok: false, error: "wrong_admin_pin" });
+  const next = String(p.new_pin ?? "").trim();
+  if (next.length < 4) return json({ ok: false, error: "pin_too_short" });
+  await setSetting(ADMIN_PIN_KEY, await hashPassword(next));
+  await logAdmin("change_admin_pin");
+  return json({ ok: true });
+}
+
+// Lets the calendar check a PIN before showing the settings screen.
+async function handleCheckAdminPin(p: Record<string, unknown>) {
+  return json({ ok: await checkAdminPin(String(p.admin_pin ?? "")) });
+}
+
+// ============================================================
+// Schedule calendar: holidays / big clean / stock check / toilet duty, per branch.
+// Supabase is the source of truth; for the branch marked sync_sheet, every save is also
+// mirrored into the SCHEDULE tab of the payroll sheet so anything reading it keeps working.
 // ============================================================
 
 const SCHEDULE_TAB = "SCHEDULE";
 const SCHEDULE_TEXT_TAB = "SCHEDULE_TEXT";
 
 type ScheduleRow = {
+  branch_id: string;
   date: string;
   is_holiday: boolean;
   is_big_clean: boolean;
@@ -216,39 +334,60 @@ type ScheduleRow = {
 
 // Public read: anyone with the calendar link can see the month.
 async function handleScheduleMonth(p: Record<string, unknown>) {
+  const branchId = String(p.branch ?? "");
   const month = String(p.month ?? "");
+  if (!branchId) return json({ ok: false, error: "missing_branch" });
   if (!/^\d{4}-\d{2}$/.test(month)) return json({ ok: false, error: "bad_month" });
   const [y, m] = month.split("-").map(Number);
   const next = m === 12 ? `${y + 1}-01-01` : `${y}-${String(m + 1).padStart(2, "0")}-01`;
   const { data, error } = await supabase.from("schedule_days")
     .select("date, is_holiday, is_big_clean, is_stock_check, toilet_duty")
-    .gte("date", `${month}-01`).lt("date", next).order("date");
+    .eq("branch_id", branchId).gte("date", `${month}-01`).lt("date", next).order("date");
   if (error) return json({ ok: false, error: error.message });
   return json({ ok: true, rows: data ?? [] });
 }
 
-// Today's (or `date`) schedule plus the matching SCHEDULE_TEXT messages, for a daily notifier.
+// Today's (or `date`) schedule plus the matching messages, for a daily notifier.
+// `branch` optional: without it, every branch that has something today is returned.
 async function handleScheduleToday(p: Record<string, unknown>) {
   const date = String(p.date ?? "") || bangkokToday();
-  const { data: day } = await supabase.from("schedule_days").select("*").eq("date", date).maybeSingle();
-  if (!day) return json({ ok: true, date, day: null, texts: [] });
-  const types: string[] = [];
-  if (day.is_holiday) types.push("holiday");
-  if (day.is_big_clean) types.push("big_clean");
-  if (day.is_stock_check) types.push("stock_check");
-  if (day.toilet_duty) types.push(`toilet_duty_${day.toilet_duty}`);
-  const { data: texts } = types.length
-    ? await supabase.from("schedule_texts").select("type, text_th, text_mm, text_lo").in("type", types)
-    : { data: [] };
-  const ordered = types.map((t) => (texts ?? []).find((x) => x.type === t)).filter(Boolean);
-  return json({ ok: true, date, day, texts: ordered });
+  let q = supabase.from("schedule_days").select("*").eq("date", date);
+  if (p.branch) q = q.eq("branch_id", String(p.branch));
+  const { data: days, error } = await q;
+  if (error) return json({ ok: false, error: error.message });
+  const { data: texts } = await supabase.from("schedule_texts").select("type, text_th, text_mm, text_lo");
+  const textOf = (type: string) => (texts ?? []).find((t) => t.type === type);
+  const { data: branches } = await supabase.from("branches").select("id, name");
+
+  const result = (days ?? []).map((day) => {
+    const out: Array<{ type: string; text_th: string; text_mm: string; text_lo: string }> = [];
+    const push = (type: string) => { const t = textOf(type); if (t) out.push(t); };
+    if (day.is_holiday) push("holiday");
+    if (day.is_big_clean) push("big_clean");
+    if (day.is_stock_check) push("stock_check");
+    if (day.toilet_duty) {
+      const own = textOf(`toilet_duty_${day.toilet_duty}`);
+      const tpl = textOf("toilet_duty");
+      if (own) out.push(own);
+      else if (tpl) {
+        const fill = (s: string) => s.replaceAll("{name}", day.toilet_duty);
+        out.push({ type: "toilet_duty", text_th: fill(tpl.text_th), text_mm: fill(tpl.text_mm), text_lo: fill(tpl.text_lo) });
+      }
+    }
+    const branch = (branches ?? []).find((b) => b.id === day.branch_id);
+    return { branch_id: day.branch_id, branch_name: branch?.name ?? day.branch_id, day, texts: out };
+  });
+  return json({ ok: true, date, branches: result });
 }
 
 async function handleSaveScheduleDay(p: Record<string, unknown>) {
-  if (!(await checkAdminPin(String(p.admin_pin ?? "")))) return json({ ok: false, error: "wrong_admin_pin" });
+  const branch = await getBranch(String(p.branch ?? ""));
+  if (!branch) return json({ ok: false, error: "unknown_branch" });
+  if (!(await canEditBranch(branch, String(p.admin_pin ?? "")))) return json({ ok: false, error: "wrong_admin_pin" });
   const date = String(p.date ?? "").trim();
   if (!isIsoDate(date)) return json({ ok: false, error: "bad_date" });
   const row: ScheduleRow = {
+    branch_id: branch.id,
     date,
     is_holiday: sheetBool(p.is_holiday),
     is_big_clean: sheetBool(p.is_big_clean),
@@ -263,7 +402,7 @@ async function handleSaveScheduleDay(p: Record<string, unknown>) {
   let sheet_synced = false;
   let sheet_error: string | undefined;
   const sheetId = scheduleSheetId();
-  if (sheetId) {
+  if (sheetId && branch.sync_sheet) {
     try {
       await mirrorScheduleDayToSheet(sheetId, row);
       sheet_synced = true;
@@ -288,8 +427,9 @@ async function mirrorScheduleDayToSheet(sheetId: string, row: ScheduleRow) {
   else await sheetsAppendRow(sheetId, `${SCHEDULE_TAB}!A:E`, out);
 }
 
-// Copies SCHEDULE, SCHEDULE_TEXT and the calendar admin PIN from the sheet into Supabase.
-// Safe to re-run; sheet values overwrite Supabase for the same date/type.
+// Copies SCHEDULE, SCHEDULE_TEXT and the admin PIN from the sheet into Supabase, into the branch
+// `branch_id` (created if missing, name `branch_name`), and marks that branch to sync with the sheet.
+// Staff are added from the toilet_duty_<name> rows of SCHEDULE_TEXT. Safe to re-run.
 // Auth: the admin_pin currently stored in APP_STATE1 of the sheet (the calendar's existing PIN).
 async function handleImportScheduleFromSheet(p: Record<string, unknown>) {
   const sheetId = scheduleSheetId();
@@ -299,11 +439,20 @@ async function handleImportScheduleFromSheet(p: Record<string, unknown>) {
     const sheetPin = String(JSON.parse(stateJson ?? "{}").admin_pin ?? "").trim();
     if (!sheetPin || String(p.admin_pin ?? "").trim() !== sheetPin) return json({ ok: false, error: "wrong_admin_pin" });
 
+    const branchId = cleanBranchId(String(p.branch_id ?? "main")) || "main";
+    const existing = await getBranch(branchId);
+    const branchName = String(p.branch_name ?? "").trim() || existing?.name || "สาขาหลัก";
+    {
+      const { error } = await supabase.from("branches").upsert({ id: branchId, name: branchName, sync_sheet: true });
+      if (error) throw new Error(error.message);
+    }
+
     const days = new Map<string, Record<string, unknown>>();
     for (const r of await sheetsGetValues(sheetId, `${SCHEDULE_TAB}!A:E`)) {
       const date = parseSheetDate(String(r[0] ?? ""));
       if (!date || !isIsoDate(date)) continue; // header and blank rows
       days.set(date, {
+        branch_id: branchId,
         date,
         is_holiday: sheetBool(r[1]),
         is_big_clean: sheetBool(r[2]),
@@ -334,21 +483,26 @@ async function handleImportScheduleFromSheet(p: Record<string, unknown>) {
       if (error) throw new Error(error.message);
     }
 
-    await setSetting(ADMIN_PIN_KEY, await hashPassword(sheetPin));
-    await logAdmin("import_schedule_from_sheet", { days: days.size, texts: texts.length });
-    return json({ ok: true, days: days.size, texts: texts.length });
+    // Staff from toilet_duty_<name>, only adding people not already in this branch.
+    const { data: haveStaff } = await supabase.from("staff").select("name").eq("branch_id", branchId);
+    const have = new Set((haveStaff ?? []).map((s) => s.name));
+    const newStaff = texts
+      .filter((t) => t.type.startsWith("toilet_duty_"))
+      .map((t, i) => ({ branch_id: branchId, name: t.type.slice("toilet_duty_".length), sort: have.size + i }))
+      .filter((s) => s.name && !have.has(s.name));
+    if (newStaff.length) {
+      const { error } = await supabase.from("staff").insert(newStaff);
+      if (error) throw new Error(error.message);
+    }
+
+    if (!(await getSetting<string | null>(ADMIN_PIN_KEY, null))) {
+      await setSetting(ADMIN_PIN_KEY, await hashPassword(sheetPin));
+    }
+    await logAdmin("import_schedule_from_sheet", { branchId, days: days.size, texts: texts.length, staff: newStaff.length });
+    return json({ ok: true, branch_id: branchId, days: days.size, texts: texts.length, staff_added: newStaff.length });
   } catch (e) {
     return json({ ok: false, error: String((e as Error)?.message ?? e) });
   }
-}
-
-async function handleChangeAdminPin(p: Record<string, unknown>) {
-  if (!(await checkAdminPin(String(p.admin_pin ?? "")))) return json({ ok: false, error: "wrong_admin_pin" });
-  const next = String(p.new_pin ?? "").trim();
-  if (next.length < 4) return json({ ok: false, error: "pin_too_short" });
-  await setSetting(ADMIN_PIN_KEY, await hashPassword(next));
-  await logAdmin("change_admin_pin");
-  return json({ ok: true });
 }
 
 // ============================================================
@@ -356,11 +510,16 @@ async function handleChangeAdminPin(p: Record<string, unknown>) {
 // ============================================================
 
 const ACTIONS: Record<string, (p: Record<string, unknown>) => Promise<Response>> = {
+  list_branches: handleListBranches,
   schedule_month: handleScheduleMonth,
   schedule_today: handleScheduleToday,
   save_schedule_day: handleSaveScheduleDay,
   import_schedule_from_sheet: handleImportScheduleFromSheet,
+  check_admin_pin: handleCheckAdminPin,
   change_admin_pin: handleChangeAdminPin,
+  save_branch: handleSaveBranch,
+  delete_branch: handleDeleteBranch,
+  save_staff: handleSaveStaff,
 };
 
 Deno.serve(async (req) => {
