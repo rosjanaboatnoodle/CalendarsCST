@@ -43,14 +43,15 @@
   .dotH{ background:#ef4444; }
   .dotC{ background:#0ea5e9; }
   .dotS{ background:#f59e0b; }
+  .dotT{ background:#8b5cf6; }
 
   .grid{
     background: rgba(232,233,255,.92); border-radius: 18px; padding: 10px; box-shadow: var(--shadow);
-    display:grid; grid-template-columns: repeat(7, 1fr); gap:6px;
+    display:grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap:6px;
   }
   .dow{ text-align:center; font-size:11.5px; font-weight:900; color: var(--muted); padding: 4px 0; }
   .day{
-    background:#fff; border-radius:10px; min-height: 64px; padding: 6px 6px; cursor:pointer;
+    background:#fff; border-radius:10px; min-height: 64px; padding: 6px 4px; cursor:pointer;
     border: 1px solid rgba(0,0,0,.06); position:relative; display:flex; flex-direction:column; gap:4px;
   }
   .day.empty{ background:transparent; border:none; cursor:default; }
@@ -61,6 +62,7 @@
   .badgeH{ background:#ef4444; }
   .badgeC{ background:#0ea5e9; }
   .badgeS{ background:#f59e0b; }
+  .badgeT{ background:#8b5cf6; padding:1px 3px; font-size:9px; letter-spacing:-.2px; max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 
   .overlay{ position:fixed; inset:0; background:rgba(0,0,0,.45); display:none; align-items:center; justify-content:center; padding:18px; z-index:99; }
   .overlay.show{ display:flex; }
@@ -69,6 +71,7 @@
   .row{ display:flex; align-items:center; gap:10px; padding:9px 0; border-bottom:1px dashed rgba(0,0,0,.1); }
   .row label{ font-weight:800; font-size:14px; color:#111827; flex:1; }
   .row input[type=checkbox]{ width:20px; height:20px; }
+  .row select{ padding:6px 8px; border-radius:8px; border:2px solid #c4b5fd; font-size:14px; font-weight:700; }
   .actions{ display:flex; gap:10px; margin-top:14px; }
   .actions button{ flex:1; border:none; border-radius:999px; padding:11px; font-weight:900; cursor:pointer; font-size:13px; }
   .btnSave{ background:#0f9b6b; color:#fff; }
@@ -82,7 +85,7 @@
 <div class="wrap">
   <div class="panel">
     <h1>ปฏิทินตารางงาน</h1>
-    <div class="sub">กำหนดวันหยุด / วันทำความสะอาดใหญ่ / วันเช็คสต็อค — เลือกได้มากกว่า 1 อย่างต่อวัน</div>
+    <div class="sub">กำหนดวันหยุด / วันทำความสะอาดใหญ่ / วันเช็คสต็อค / เวรล้างห้องน้ำ — เลือกได้มากกว่า 1 อย่างต่อวัน</div>
 
     <div class="monthBar">
       <button onclick="changeMonth(-1)">‹ เดือนก่อน</button>
@@ -94,6 +97,7 @@
       <div class="legendItem"><span class="dot dotH"></span> วันหยุด</div>
       <div class="legendItem"><span class="dot dotC"></span> ทำความสะอาดใหญ่</div>
       <div class="legendItem"><span class="dot dotS"></span> เช็คสต็อค</div>
+      <div class="legendItem"><span class="dot dotT"></span> เวรล้างห้องน้ำ</div>
     </div>
 
     <div class="grid" id="grid"></div>
@@ -105,7 +109,8 @@
     <div class="modalTitle" id="editTitle">แก้ไขวันที่</div>
     <div class="row"><label>วันหยุด</label><input type="checkbox" id="cbHoliday"></div>
     <div class="row"><label>ทำความสะอาดใหญ่</label><input type="checkbox" id="cbBigClean"></div>
-    <div class="row" style="border-bottom:none;"><label>เช็คสต็อค</label><input type="checkbox" id="cbStockCheck"></div>
+    <div class="row"><label>เช็คสต็อค</label><input type="checkbox" id="cbStockCheck"></div>
+    <div class="row" style="border-bottom:none;"><label>เวรล้างห้องน้ำ</label><select id="selToilet"></select></div>
     <div class="pinRow">
       <input id="adminPin" type="password" placeholder="รหัสผ่านแอดมิน" inputmode="numeric">
     </div>
@@ -121,8 +126,16 @@
   // ตั้งค่า URL ให้ตรงกับ Web App เดียวกับ index.html
   const API = "https://script.google.com/macros/s/AKfycbxrjJHuxcS2nHxpzx-KKJqs94idaOPZzxCdyYsoPA5CEVpLYOmt1Lm1bgaYPRlnfS250g/exec";
 
+  // คนที่อยู่ในเวรล้างห้องน้ำ: key ต้องตรงกับชื่อหลัง toilet_duty_ ในแท็บ SCHEDULE_TEXT
+  const TOILET_PEOPLE = [
+    { key: "Kla",    label: "กล้า Kla",        short: "Kla" },
+    { key: "Bank",   label: "แบงค์ Bank",      short: "Bank" },
+    { key: "Maylin", label: "เมย์ลิน Maylin",  short: "May" },
+    { key: "Hom",    label: "หอม Hom",         short: "Hom" }
+  ];
+
   let viewYear, viewMonth; // viewMonth: 0-11
-  let scheduleMap = {}; // { "2026-08-05": {is_holiday, is_big_clean, is_stock_check} }
+  let scheduleMap = {}; // { "2026-08-05": {is_holiday, is_big_clean, is_stock_check, toilet_duty} }
   let editingDate = "";
 
   const monthNamesTH = ["มกราคม","กุมภาพันธ์","มีนาคม","เมษายน","พฤษภาคม","มิถุนายน","กรกฎาคม","สิงหาคม","กันยายน","ตุลาคม","พฤศจิกายน","ธันวาคม"];
@@ -201,6 +214,9 @@
       if (info && info.is_stock_check){
         const b = document.createElement("span"); b.className="badge badgeS"; b.textContent="สต็อค"; badges.appendChild(b);
       }
+      if (info && info.toilet_duty){
+        const b = document.createElement("span"); b.className="badge badgeT"; const person = TOILET_PEOPLE.find(p => p.key === info.toilet_duty); b.textContent = person ? person.short : info.toilet_duty; b.title="เวรล้างห้องน้ำ: " + info.toilet_duty; badges.appendChild(b);
+      }
       cell.appendChild(badges);
       grid.appendChild(cell);
     }
@@ -213,9 +229,24 @@
     document.getElementById("cbHoliday").checked = !!info.is_holiday;
     document.getElementById("cbBigClean").checked = !!info.is_big_clean;
     document.getElementById("cbStockCheck").checked = !!info.is_stock_check;
+    fillToiletSelect(info.toilet_duty || "");
     document.getElementById("adminPin").value = "";
     document.getElementById("statusMsg").textContent = "";
     document.getElementById("editOverlay").classList.add("show");
+  }
+
+  function fillToiletSelect(current){
+    const sel = document.getElementById("selToilet");
+    sel.innerHTML = "";
+    const opts = [{ key: "", label: "— ไม่มี —" }].concat(TOILET_PEOPLE);
+    // ถ้าในชีทมีชื่อที่ไม่อยู่ในรายการ (เช่นคนออกไปแล้ว) ก็ยังโชว์ไว้ ไม่ให้หายตอนกดบันทึก
+    if (current && !TOILET_PEOPLE.some(p => p.key === current)) opts.push({ key: current, label: current });
+    opts.forEach(p => {
+      const o = document.createElement("option");
+      o.value = p.key; o.textContent = p.label;
+      sel.appendChild(o);
+    });
+    sel.value = current;
   }
 
   function closeEdit(){
@@ -234,6 +265,7 @@
     const isHoliday = document.getElementById("cbHoliday").checked ? "1" : "0";
     const isBigClean = document.getElementById("cbBigClean").checked ? "1" : "0";
     const isStockCheck = document.getElementById("cbStockCheck").checked ? "1" : "0";
+    const toiletDuty = document.getElementById("selToilet").value;
 
     statusEl.textContent = "กำลังบันทึก...";
     statusEl.style.color = "#374151";
@@ -244,6 +276,7 @@
       is_holiday: isHoliday,
       is_big_clean: isBigClean,
       is_stock_check: isStockCheck,
+      toilet_duty: toiletDuty,
       admin_pin: pin
     });
 
