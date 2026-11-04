@@ -123,11 +123,14 @@
 </div>
 
 <script>
-  // ข้อมูลอยู่ใน Supabase (project เดียวกับแอปเช็คสต็อก) ผ่าน Edge Function "api"
+  // ข้อมูลอยู่ใน Supabase project ของระบบพนักงาน ผ่าน Edge Function "api" (โค้ดอยู่ใน supabase/ ของ repo นี้)
   // ทุกครั้งที่บันทึก ระบบจะเขียนลงแท็บ SCHEDULE ใน Google Sheet ให้ด้วย
-  // key นี้เป็น publishable key ฝังในหน้าเว็บได้ ข้อมูลจริงถูกล็อกด้วย RLS
-  const API = "https://anzpzgvlexeeitmwpxpw.supabase.co/functions/v1/api";
-  const SUPABASE_KEY = "sb_publishable_vGq8fukQvgOkjgmcj1P0dw_PUQIbeAb";
+  // ใส่ค่าจาก Supabase Dashboard -> Project Settings -> API:
+  //   PROJECT_REF = ส่วนหน้าของ Project URL (https://<PROJECT_REF>.supabase.co)
+  //   SUPABASE_KEY = publishable key (sb_publishable_...) ฝังในหน้าเว็บได้ ข้อมูลจริงถูกล็อกด้วย RLS
+  const PROJECT_REF = "YOUR_PROJECT_REF";
+  const SUPABASE_KEY = "YOUR_PUBLISHABLE_KEY";
+  const API = "https://" + PROJECT_REF + ".supabase.co/functions/v1/api";
 
   // คนที่อยู่ในเวรล้างห้องน้ำ: key ต้องตรงกับชื่อหลัง toilet_duty_ ในแท็บ SCHEDULE_TEXT
   const TOILET_PEOPLE = [
@@ -303,6 +306,9 @@
   }
 
   (function init(){
+    if (PROJECT_REF.startsWith("YOUR_") || SUPABASE_KEY.startsWith("YOUR_")){
+      document.querySelector(".sub").textContent = "⚠️ ยังไม่ได้ตั้งค่า Supabase: ใส่ PROJECT_REF และ SUPABASE_KEY ใน index.html";
+    }
     const now = new Date();
     viewYear = now.getFullYear();
     viewMonth = now.getMonth();
